@@ -1,0 +1,254 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from matplotlib.patches import Rectangle
+from queue import Queue
+from collections import deque
+import random
+import sys
+
+
+class MazeGenerator:
+    def __init__(self, width, height):
+        if width < 16 or height < 16:
+            raise ValueError("Минимальный размер лабиринта 16x16")
+
+        self.width = width
+        self.height = height
+        self.maze = np.zeros((height, width), dtype=int)
+        self.visited = np.zeros((height, width), dtype=bool)
+        self.directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+        self.center = (height // 2, width // 2)
+
+    def is_valid(self, y, x):
+        return 0 <= y < self.height and 0 <= x < self.width
+
+    def generate_maze(self):
+        # Начинаем с края лабиринта
+        start_y, start_x = 0, 0
+        self.visited[start_y][start_x] = True
+        stack = [(start_y, start_x)]
+
+        while stack:
+            y, x = stack[-1]
+            neighbors = []
+
+            for dy, dx in self.directions:
+                ny, nx = y + dy, x + dx
+                if self.is_valid(ny, nx) and not self.visited[ny][nx]:
+                    neighbors.append((ny, nx))
+
+            if neighbors:
+                ny, nx = random.choice(neighbors)
+                self.visited[ny][nx] = True
+                self.maze[y][x] |= 1 << self.directions.index((ny - y, nx - x))
+                self.maze[ny][nx] |= 1 << self.directions.index((y - ny, x - nx))
+                stack.append((ny, nx))
+            else:
+                stack.pop()
+
+        # Убедимся, что есть минимум 2 пути в центр
+        self.ensure_multiple_paths_to_center()
+
+    def ensure_multiple_paths_to_center(self):
+        paths = []
+        attempts = 0
+
+        # Пробуем с разных стартовых точек
+        start_points = [(0, 0), (0, self.width - 1), (self.height - 1, 0), (self.height - 1, self.width - 1)]
+
+        while len(paths) < 2 and attempts < 10:
+            for start in start_points:
+                if len(paths) >= 2:
+                    break
+
+                path = self.find_path_to_center(start[0], start[1])
+                if path and path not in paths:
+                    paths.append(path)
+
+            if len(paths) < 2:
+                # Если не нашли 2 пути, добавим случайные проходы
+                self.add_random_passages()
+                paths = []  # Сбросим найденные пути
+                attempts += 1
+
+    def add_random_passages(self):
+        for _ in range(5):
+            y, x = random.randint(1, self.height - 2), random.randint(1, self.width - 2)
+            for dy, dx in random.sample(self.directions, 2):
+                ny, nx = y + dy, x + dx
+                if self.is_valid(ny, nx):
+                    self.maze[y][x] |= 1 << self.directions.index((dy, dx))
+                    self.maze[ny][nx] |= 1 << self.directions.index((-dy, -dx))
+
+    def find_path_to_center(self, start_y, start_x):
+        queue = deque()
+        queue.append((start_y, start_x, []))
+        visited = np.zeros((self.height, self.width), dtype=bool)
+        visited[start_y][start_x] = True
+
+        while queue:
+            y, x, path = queue.popleft()
+            new_path = path + [(y, x)]
+
+            if (y, x) == self.center:
+                return new_path
+
+            for i, (dy, dx) in enumerate(self.directions):
+                if self.maze[y][x] & (1 << i):
+                    ny, nx = y + dy, x + dx
+                    if self.is_valid(ny, nx) and not visited[ny][nx]:
+                        visited[ny][nx] = True
+                        queue.append((ny, nx, new_path))
+
+        return None
+
+    def find_all_paths_to_center(self):
+        start_points = [(0, 0), (0, self.width - 1), (self.height - 1, 0), (self.height - 1, self.width - 1)]
+        paths = []
+
+        for start in start_points:
+            path = self.find_path_to_center(start[0], start[1])
+            if path:
+                paths.append(path)
+
+        return paths
+
+    def print_maze(self):
+        for y in range(self.height):
+            for x in range(self.width):
+                cell = self.maze[y][x]
+                # Определяем, есть ли проходы вверх/вниз/влево/вправо
+                up = cell & (1 << 3)
+                down = cell & (1 << 1)
+                left = cell & (1 << 2)
+                right = cell & (1 << 0)
+
+                if up or down or left or right:
+                    print(" ", end="")
+                else:
+                    print("#", end="")
+            print()
+
+    def visualize_maze_with_paths(self):
+        fig, ax = plt.subplots(figsize=(10, 10))
+
+        # Рисуем стены
+        for y in range(self.height):
+            for x in range(self.width):
+                cell = self.maze[y][x]
+
+                # Верхняя стена
+                if not (cell & (1 << 3)) or y == 0:
+                    ax.add_patch(Rectangle((x, self.height - y), 1, 0.05, color='black'))
+
+                # Правая стена
+                if not (cell & (1 << 0)) or x == self.width - 1:
+                    ax.add_patch(Rectangle((x + 0.95, self.height - y - 1), 0.05, 1, color='black'))
+
+                # Нижняя стена
+                if not (cell & (1 << 1)) or y == self.height - 1:
+                    ax.add_patch(Rectangle((x, self.height - y - 0.95), 1, 0.05, color='black'))
+
+                # Левая стена
+                if not (cell & (1 << 2)) or x == 0:
+                    ax.add_patch(Rectangle((x, self.height - y - 1), 0.05, 1, color='black'))
+
+        # Находим все пути к центру
+        paths = self.find_all_paths_to_center()
+
+        if not paths:
+            print("Не удалось найти пути к центру!")
+            return
+
+        # Выбираем два уникальных пути
+        if len(paths) >= 2:
+            selected_paths = paths[:2]
+        else:
+            # Если найден только один путь, создадим второй, изменив его немного
+            selected_paths = [paths[0], self.modify_path(paths[0])]
+
+        # Рисуем пути разными цветами
+        colors = ['red', 'blue']
+        path_lengths = []
+
+        for i, path in enumerate(selected_paths):
+            path_lengths.append(len(path))
+            color = colors[i]
+
+            # Рисуем путь
+            for y, x in path:
+                ax.add_patch(Rectangle((x + 0.1, self.height - y - 0.9), 0.8, 0.8, color=color, alpha=0.3))
+
+            # Рисуем линию пути
+            path_x = [p[1] + 0.5 for p in path]
+            path_y = [self.height - p[0] - 0.5 for p in path]
+            ax.plot(path_x, path_y, color=color, linewidth=2, label=f'Путь {i + 1} (длина: {len(path)})')
+
+        # Помечаем центр
+        ax.add_patch(Rectangle((self.center[1] + 0.25, self.height - self.center[0] - 0.75), 0.5, 0.5, color='green'))
+
+        ax.set_xlim(0, self.width)
+        ax.set_ylim(0, self.height)
+        ax.set_aspect('equal')
+        ax.axis('off')
+        ax.set_title(f'Лабиринт {self.width}x{self.height} с путями к центру')
+
+        # Определяем кратчайший путь
+        shortest_idx = 0 if path_lengths[0] <= path_lengths[1] else 1
+        print(f"Путь 1: {path_lengths[0]} шагов")
+        print(f"Путь 2: {path_lengths[1]} шагов")
+        print(f"Кратчайший путь: Путь {shortest_idx + 1} ({min(path_lengths)} шагов)")
+
+        ax.legend()
+        plt.show()
+
+    def modify_path(self, path):
+        # Модифицируем путь, чтобы создать второй уникальный путь
+        new_path = path.copy()
+
+        # Попробуем найти альтернативные пути в нескольких местах
+        for i in range(1, len(path) - 1):
+            y, x = path[i]
+
+            # Проверим соседние клетки
+            for dy, dx in random.sample(self.directions, len(self.directions)):
+                ny, nx = y + dy, x + dx
+                if (ny, nx) != path[i - 1] and (ny, nx) != path[i + 1] and self.is_valid(ny, nx):
+                    # Проверим, есть ли соединение
+                    if self.maze[y][x] & (1 << self.directions.index((dy, dx))):
+                        # Попробуем найти путь от этой точки к центру
+                        partial_path = self.find_path_to_center(ny, nx)
+                        if partial_path:
+                            return path[:i] + [(y, x)] + partial_path
+
+        return new_path
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3:
+        width = int(sys.argv[1])
+        height = int(sys.argv[2])
+    else:
+        # Параметры по умолчанию
+        width = 20
+        height = 20
+
+    try:
+
+        if width < 16 or height < 16:
+            print("Минимальный размер лабиринта 16x16")
+            sys.exit(1)
+
+        generator = MazeGenerator(width, height)
+        generator.generate_maze()
+
+        print("Текстовое представление лабиринта:")
+        generator.print_maze()
+
+        print("\nВизуализация лабиринта с путями:")
+        generator.visualize_maze_with_paths()
+
+    except ValueError as e:
+        print(f"Ошибка: {e}")
+        sys.exit(1)
